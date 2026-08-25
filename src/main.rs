@@ -98,11 +98,14 @@ impl P2pNode {
 
 #[tokio::main]
 async fn main() {
+    let args = std::env::args().collect::<Vec<String>>();
 
     let node = P2pNode::new(
-        String::from("bob"),
+        String::from(args.get(1).unwrap()),
         local_ip().unwrap().to_string()
     );
+
+    println!("node name: {}", node.username);
 
     let node = Arc::new(node);
 
