@@ -68,17 +68,18 @@ impl P2pNode {
             let name = String::from_utf8_lossy(&buffer[..len]);
             if name == self.username { continue; }
 
-            let mut address = sender.ip().to_string();
+            let address = sender.ip().to_string();
 
-            address = format!("{}:8002", address);
             let mut peers = self.peers.lock().await;
-            if peers.contains_key(&sender.ip().to_string()) { continue; }
+            if peers.contains_key(&address) { continue; }
 
             println!("received broadcast from \"{}\" on ip: {}", &name, address);
 
 
-            let mut connection = TcpStream::connect(&address).await?;
+            let mut connection = TcpStream::connect(format!("{}:8002", address)).await?;
             connection.write_all(format!("{}\r\n", self.username).as_bytes()).await?;
+
+            println!("{address} connected as {name} | sender");
 
             let peer = Peer::new(name.to_string(), connection);
 
@@ -103,7 +104,7 @@ impl P2pNode {
             if peers.contains_key(&addr.to_string()) { continue; }
 
             let name = String::from_utf8_lossy(&buffer[..length]);
-            println!("{addr} connected as {name}");
+            println!("{addr} connected as {name} | receiver");
 
             let peer = Peer::new(name.to_string(), stream);
 
