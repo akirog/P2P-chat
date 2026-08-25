@@ -82,10 +82,11 @@ impl P2pNode {
             if length < 1 { continue; }
 
             let name = String::from_utf8_lossy(&buffer[..length]);
-            println!("{addr} connected as {name}");
 
             let mut peers = self.peers.lock().await;
             if peers.contains_key(name.as_ref()) { continue; }
+
+            println!("{addr} connected as {name}");
 
             peers.insert(name.to_string(), stream);
         }
