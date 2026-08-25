@@ -6,10 +6,25 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::Mutex;
 
 
+struct Peer {
+    name: String,
+    stream: Mutex<TcpStream>,
+}
+
+impl Peer {
+    fn new(name: String, stream: TcpStream) -> Peer {
+        return Peer{
+            name,
+            stream: Mutex::new(stream),
+        }
+    }
+}
+
+
 struct P2pNode {
     username: String,
     address: String,
-    peers: Arc<Mutex<HashMap<String, TcpStream>>>
+    peers: Arc<Mutex<HashMap<String, Peer>>>
 }
 
 impl P2pNode {
@@ -57,14 +72,17 @@ impl P2pNode {
 
             address = format!("{}:8002", address);
             let mut peers = self.peers.lock().await;
-            if peers.contains_key(name.as_ref()) { continue; }
+            if peers.contains_key(&sender.ip().to_string()) { continue; }
 
-            println!("received broadcast from user: {} on ip: {}", &name, address);
+            println!("received broadcast from \"{}\" on ip: {}", &name, address);
 
 
             let mut connection = TcpStream::connect(&address).await?;
             connection.write_all(format!("{}\r\n", self.username).as_bytes()).await?;
-            peers.insert(name.to_string(), connection);
+
+            let peer = Peer::new(name.to_string(), connection);
+
+            peers.insert(sender.ip().to_string(), peer);
 
         }
     }
@@ -81,14 +99,15 @@ impl P2pNode {
             let length = stream.read(&mut buffer).await?;
             if length < 1 { continue; }
 
-            let name = String::from_utf8_lossy(&buffer[..length]);
-
             let mut peers = self.peers.lock().await;
-            if peers.contains_key(name.as_ref()) { continue; }
+            if peers.contains_key(&addr.to_string()) { continue; }
 
+            let name = String::from_utf8_lossy(&buffer[..length]);
             println!("{addr} connected as {name}");
 
-            peers.insert(name.to_string(), stream);
+            let peer = Peer::new(name.to_string(), stream);
+
+            peers.insert(addr.ip().to_string(), peer);
         }
     }
 }
