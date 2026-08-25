@@ -77,7 +77,7 @@ impl P2pNode {
 
 
             let mut connection = TcpStream::connect(format!("{}:8002", address)).await?;
-            connection.write_all(format!("{}\r\n", self.username).as_bytes()).await?;
+            connection.write_all(format!("{}", self.username).as_bytes()).await?;
 
             println!("{address} connected as {name} | sender");
 
