@@ -3,20 +3,42 @@ use std::sync::Arc;
 use local_ip_address::local_ip;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::Mutex;
 
 
 struct Peer {
     name: String,
-    stream: Mutex<TcpStream>,
+    reader: Mutex<OwnedReadHalf>,
+    writer: Mutex<OwnedWriteHalf>,
 }
 
 impl Peer {
     fn new(name: String, stream: TcpStream) -> Peer {
-        return Peer{
+        let (reader, writer) = stream.into_split();
+
+        Peer{
             name,
-            stream: Mutex::new(stream),
+            reader: Mutex::new(reader),
+            writer: Mutex::new(writer),
         }
+    }
+
+    async fn listen(&self) {
+        loop {
+            let mut message_buff = [0; 1024];
+
+            let mut reader = self.reader.lock().await;
+
+            let length = reader.read(&mut message_buff).await.unwrap();
+            println!("Received: {}", String::from_utf8_lossy(&message_buff[..length]));
+        }
+    }
+
+    async fn send(&self, message: &str) {
+        let mut writer = self.writer.lock().await;
+
+        writer.write_all(message.as_bytes()).await.unwrap();
     }
 }
 
@@ -70,8 +92,11 @@ impl P2pNode {
 
             let address = sender.ip().to_string();
 
-            let mut peers = self.peers.lock().await;
-            if peers.contains_key(&address) { continue; }
+            {
+                let mut peers = self.peers.lock().await;
+                if peers.contains_key(&address) { continue; }
+            }
+            
 
             println!("received broadcast from \"{}\" on ip: {}", &name, address);
 
@@ -99,7 +124,7 @@ impl P2pNode {
             let mut buffer = [0; 1024];
             let length = stream.read(&mut buffer).await?;
             if length < 1 { continue; }
-
+    
             let mut peers = self.peers.lock().await;
             if peers.contains_key(&addr.to_string()) { continue; }
 
@@ -107,6 +132,11 @@ impl P2pNode {
             println!("{addr} connected as {name} | receiver");
 
             let peer = Peer::new(name.to_string(), stream);
+
+            let listening_peer = Arc::new(peer);
+            let listening_task = tokio::spawn(async move {
+                listening_peer.listen().await;
+            });
 
             peers.insert(addr.ip().to_string(), peer);
         }
@@ -120,7 +150,7 @@ async fn main() {
     let args = std::env::args().collect::<Vec<String>>();
 
     let node = P2pNode::new(
-        String::from(args.get(1).unwrap()),
+        String::from(args.get(1).unwrap_or(&"Anon".to_string())),
         local_ip().unwrap().to_string()
     );
 
@@ -151,6 +181,25 @@ async fn main() {
         }
     });
 
+
+
+    loop {
+
+        let mut message = String::new();
+
+        std::io::stdin()
+            .read_line(&mut message)
+            .expect("failed to read from stdin");
+
+        let name = node.username.clone();
+
+        println!("{name}: {message}");
+
+        for peer in node.peers.lock().await.values_mut() {
+
+            peer.send(&message).await;
+        }
+    }
 
     tokio::try_join!(listening_task, broadcast_listener_task, broadcast_task).unwrap();
 }
