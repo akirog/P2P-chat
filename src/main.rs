@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use futures::FutureExt;
 use local_ip_address::local_ip;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
@@ -31,6 +32,11 @@ impl Peer {
             let mut reader = self.reader.lock().await;
 
             let length = reader.read(&mut message_buff).await.unwrap();
+            if length == 0 {
+                // Connection terminated
+                return;
+            }
+
             println!("Received: {}", String::from_utf8_lossy(&message_buff[..length]));
         }
     }
@@ -46,7 +52,7 @@ impl Peer {
 struct P2pNode {
     username: String,
     address: String,
-    peers: Arc<Mutex<HashMap<String, Peer>>>
+    peers: Arc<Mutex<HashMap<String, Arc<Peer>>>>
 }
 
 impl P2pNode {
@@ -96,7 +102,7 @@ impl P2pNode {
                 let mut peers = self.peers.lock().await;
                 if peers.contains_key(&address) { continue; }
             }
-            
+
 
             println!("received broadcast from \"{}\" on ip: {}", &name, address);
 
@@ -106,9 +112,10 @@ impl P2pNode {
 
             println!("{address} connected as {name} | sender");
 
+            let mut peers = self.peers.lock().await;
             let peer = Peer::new(name.to_string(), connection);
 
-            peers.insert(sender.ip().to_string(), peer);
+            peers.insert(sender.ip().to_string(), Arc::new(peer));
 
         }
     }
@@ -124,22 +131,33 @@ impl P2pNode {
             let mut buffer = [0; 1024];
             let length = stream.read(&mut buffer).await?;
             if length < 1 { continue; }
-    
-            let mut peers = self.peers.lock().await;
-            if peers.contains_key(&addr.to_string()) { continue; }
+
+            {
+                let mut peers = self.peers.lock().await;
+                if peers.contains_key(&addr.to_string()) { continue; }
+            }
 
             let name = String::from_utf8_lossy(&buffer[..length]);
             println!("{addr} connected as {name} | receiver");
 
-            let peer = Peer::new(name.to_string(), stream);
+            let peer = Arc::new(Peer::new(name.to_string(), stream));
 
-            let listening_peer = Arc::new(peer);
+            let peers = self.peers.clone();
+            let addr_clone = addr.to_string();
+
+            let listening_peer = peer.clone();
             let listening_task = tokio::spawn(async move {
                 listening_peer.listen().await;
-            });
+            }.then(|_| async move {
+                let mut peers = peers.lock().await;
+                peers.remove(&addr_clone);
+            }));
 
+            let mut peers = self.peers.lock().await;
             peers.insert(addr.ip().to_string(), peer);
         }
+
+
     }
 }
 
@@ -161,7 +179,7 @@ async fn main() {
     let connection_node = node.clone();
     let listening_task = tokio::spawn(async move {
        if let Err(e) = connection_node.accept_connection_requests().await {
-           println!("Listener: {e}");
+           println!("Listener error: {e}");
        }
     });
 
@@ -201,5 +219,4 @@ async fn main() {
         }
     }
 
-    tokio::try_join!(listening_task, broadcast_listener_task, broadcast_task).unwrap();
 }
