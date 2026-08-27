@@ -38,7 +38,7 @@ impl Peer {
                 return;
             }
 
-            println!("{}: {}\n", self.name, String::from_utf8_lossy(&message_buff[..length]));
+            println!("{}: {}", self.name, String::from_utf8_lossy(&message_buff[..length]));
         }
     }
 
