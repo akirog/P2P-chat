@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::Arc;
 use futures::FutureExt;
 use local_ip_address::local_ip;
@@ -37,7 +38,7 @@ impl Peer {
                 return;
             }
 
-            println!("Received: {}", String::from_utf8_lossy(&message_buff[..length]));
+            println!("{}: {}\n", self.name, String::from_utf8_lossy(&message_buff[..length]));
         }
     }
 
@@ -99,7 +100,7 @@ impl P2pNode {
             let address = sender.ip().to_string();
 
             {
-                let mut peers = self.peers.lock().await;
+                let peers = self.peers.lock().await;
                 if peers.contains_key(&address) { continue; }
             }
 
@@ -118,7 +119,7 @@ impl P2pNode {
             let addr_clone = address.to_string();
 
             let listening_peer = peer.clone();
-            let listening_task = tokio::spawn(async move {
+            let _listening_task = tokio::spawn(async move {
                 listening_peer.listen().await;
             }.then(|_| async move {
                 let mut peers = peers.lock().await;
@@ -146,7 +147,7 @@ impl P2pNode {
             if length < 1 { continue; }
 
             {
-                let mut peers = self.peers.lock().await;
+                let peers = self.peers.lock().await;
                 if peers.contains_key(&addr.to_string()) { continue; }
             }
 
@@ -159,7 +160,7 @@ impl P2pNode {
             let addr_clone = addr.to_string();
 
             let listening_peer = peer.clone();
-            let listening_task = tokio::spawn(async move {
+            let _listening_task = tokio::spawn(async move {
                 listening_peer.listen().await;
             }.then(|_| async move {
                 let mut peers = peers.lock().await;
@@ -178,10 +179,32 @@ impl P2pNode {
 
 #[tokio::main]
 async fn main() {
-    let args = std::env::args().collect::<Vec<String>>();
+
+    match TcpListener::bind("0.0.0.0:8002").await {
+        Ok(_) => {
+            // Port is free, continue
+        }
+        Err(e) => {
+            eprintln!("Error: Port 8002 is already in use!");
+            eprintln!("Another instance might be running. Please close it and try again.");
+            eprintln!("Error details: {}", e);
+            std::process::exit(1);
+        }
+    }
+
+    print!("Enter username: ");
+    let mut name = String::new();
+
+    std::io::stdout().flush().unwrap();
+
+    std::io::stdin()
+        .read_line(&mut name)
+        .expect("failed to read from stdin");
+
+    name = name.trim().to_string();
 
     let node = P2pNode::new(
-        String::from(args.get(1).unwrap_or(&"Anon".to_string())),
+        name,
         local_ip().unwrap().to_string()
     );
 
@@ -190,7 +213,7 @@ async fn main() {
     let node = Arc::new(node);
 
     let connection_node = node.clone();
-    let listening_task = tokio::spawn(async move {
+    let _listening_task = tokio::spawn(async move {
        if let Err(e) = connection_node.accept_connection_requests().await {
            println!("Listener error: {e}");
        }
@@ -198,7 +221,7 @@ async fn main() {
 
 
     let broadcast_listener_node = node.clone();
-    let broadcast_listener_task = tokio::spawn(async move {
+    let _broadcast_listener_task = tokio::spawn(async move {
         if let Err(e) = broadcast_listener_node.listen_for_peers().await {
             println!("Broadcast listener error: {}", e);
         }
@@ -206,7 +229,7 @@ async fn main() {
 
 
     let broadcast_node = node.clone();
-    let broadcast_task = tokio::spawn(async move {
+    let _broadcast_task = tokio::spawn(async move {
         if let Err(e) = broadcast_node.broadcast_presence().await {
             println!("Broadcasting error: {}", e);
         }
@@ -222,9 +245,7 @@ async fn main() {
             .read_line(&mut message)
             .expect("failed to read from stdin");
 
-        let name = node.username.clone();
-
-        println!("{name}: {message}");
+        message = message.trim().to_string();
 
         for peer in node.peers.lock().await.values_mut() {
 
