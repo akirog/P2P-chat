@@ -112,10 +112,23 @@ impl P2pNode {
 
             println!("{address} connected as {name} | sender");
 
-            let mut peers = self.peers.lock().await;
-            let peer = Peer::new(name.to_string(), connection);
+            let peer = Arc::new(Peer::new(name.to_string(), connection));
 
-            peers.insert(sender.ip().to_string(), Arc::new(peer));
+            let peers = self.peers.clone();
+            let addr_clone = address.to_string();
+
+            let listening_peer = peer.clone();
+            let listening_task = tokio::spawn(async move {
+                listening_peer.listen().await;
+            }.then(|_| async move {
+                let mut peers = peers.lock().await;
+                peers.remove(&addr_clone);
+            }));
+
+
+            let mut peers = self.peers.lock().await;
+
+            peers.insert(sender.ip().to_string(), peer);
 
         }
     }
